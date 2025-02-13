@@ -11,7 +11,7 @@ from langgraph.graph import StateGraph, END, START
 
 from NodeData import NodeData
 from llm import get_llm, clip_history, create_llm_chain
-from util import flush_print
+from util import flush_print, with_metadata
 
 # Tool registry to hold information about tools
 tool_registry: Dict[str, Callable] = {}
@@ -53,70 +53,46 @@ class PipelineState(TypedDict):
     task: Annotated[str, operator.add]
     condition: Annotated[bool, lambda x, y: y]
 
-def execute_step(name:str, state: PipelineState, prompt_template: str, llm) -> PipelineState:
+@with_metadata
+def execute_step(state: PipelineState, name: str, prompt_template: str, llm) -> PipelineState:
     flush_print(f"{name} is working...")
     state["history"] = clip_history(state["history"])
-
-    generation = create_llm_chain(prompt_template, llm, state["history"])
-    data = json.loads(generation)
-    
+    data = json.loads(create_llm_chain(prompt_template, llm, state["history"]))
     state["history"] += "\n" + json.dumps(data)
     state["history"] = clip_history(state["history"])
-
     flush_print(state["history"])
     return state
 
-def execute_tool(name: str, state: PipelineState, prompt_template: str, llm) -> PipelineState:
-
+@with_metadata
+def execute_tool(state: PipelineState, name: str, prompt_template: str, llm) -> PipelineState:
     flush_print(f"{name} is working...")
-
     state["history"] = clip_history(state["history"])
-    
     generation = create_llm_chain(prompt_template, llm, state["history"])
-
-    # Sanitize the generation output by removing invalid control characters
     sanitized_generation = re.sub(r'[\x00-\x1F\x7F]', '', generation)
-
     flush_print(sanitized_generation)
-
     data = json.loads(sanitized_generation)
-    
-    choice = data
-    tool_name = choice["function"]
-    args = choice["args"]
-    
+
+    tool_name, args = data["function"], data["args"]
     if tool_name not in tool_registry:
         raise ValueError(f"Tool {tool_name} not found in registry.")
-    
+
     result = tool_registry[tool_name](*args)
+    flush_print(f"Executed Tool: {tool_name}({', '.join(map(str, args))}) Result: {result}")
 
-    # Flatten args to a string
-    flattened_args = ', '.join(map(str, args))
-
-    flush_print(f"\nExecuted Tool: {tool_name}({flattened_args})  Result is: {result}")
-
-
-    state["history"] += f"\nExecuted {tool_name}({flattened_args})  Result is: {result}"
+    state["history"] += f"\nExecuted {tool_name}({', '.join(map(str, args))}) Result: {result}"
     state["history"] = clip_history(state["history"])
-
     return state
 
-def condition_switch(name:str, state: PipelineState, prompt_template: str, llm) -> PipelineState:
+@with_metadata
+def condition_switch(state: PipelineState, name: str, prompt_template: str, llm) -> PipelineState:
     flush_print(f"{name} is working...")
-
     state["history"] = clip_history(state["history"])
-
-    generation = create_llm_chain(prompt_template, llm, state["history"])
-    data = json.loads(generation)
-    
-    condition = data["switch"]
-    state["condition"] = condition
-    
-    state["history"] += f"\nCondition is {condition}"
-    state["history"] = clip_history(state["history"])
-
+    data = json.loads(create_llm_chain(prompt_template, llm, state["history"]))
+    state["condition"] = data["switch"]
+    flush_print(f"Condition is {state['condition']}")
     return state
 
+@with_metadata
 def info_add(name: str, state: PipelineState, information: str, llm) -> PipelineState:
     flush_print(f"{name} is adding information...")
 
@@ -126,7 +102,7 @@ def info_add(name: str, state: PipelineState, information: str, llm) -> Pipeline
 
     return state
 
-
+@with_metadata
 def sg_add(name:str, state: PipelineState, sg_name: str) -> PipelineState:
     flush_print(f"{name} is working, it is a subgraph node call {sg_name} ...")
     subgraph = subgraph_registry[sg_name]
@@ -149,6 +125,7 @@ def conditional_edge(state: PipelineState) -> Literal["True", "False"]:
     else:
         return "False"
 
+@with_metadata
 def build_subgraph(node_map: Dict[str, NodeData], llm) -> StateGraph:
     # Define the state machine
     subgraph = StateGraph(PipelineState)
