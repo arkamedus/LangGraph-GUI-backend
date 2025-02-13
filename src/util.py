@@ -20,21 +20,28 @@ def flush_print(message: str, status: Optional[bool] = None):
     }
     print(json.dumps(log, ensure_ascii=False), flush=True)
 
-def with_metadata(fn: Callable, sg_name: str, node_name: str, node_id: str, node_type: str):
+def with_metadata(fn: Callable):
     """
-    Decorator to inject metadata before execution and log start/end events.
+    Decorator to inject metadata dynamically at runtime before execution.
     """
     def wrapped(state, *args, **kwargs):
         global CURRENT_METADATA
-        CURRENT_METADATA = {
-            "graph": sg_name,
-            "subgraph": sg_name,
-            "node": node_name,
-            "node_id": node_id,
-            "node_type": node_type
+
+        # Extract node-specific metadata from function arguments
+        node_metadata = {
+            "graph": kwargs.get("graph", "root"),
+            "subgraph": kwargs.get("subgraph", ""),
+            "node": kwargs.get("name", ""),
+            "node_id": kwargs.get("node_id", ""),
+            "node_type": kwargs.get("node_type", "")
         }
-        flush_print("START execution", status=True)
+
+        CURRENT_METADATA.update(node_metadata)
+
+        flush_print(f"START execution of {CURRENT_METADATA['node']}", status=True)
         result = fn(state, *args, **kwargs)
-        flush_print("END execution", status=False)
+        flush_print(f"END execution of {CURRENT_METADATA['node']}", status=False)
+
         return result
     return wrapped
+
