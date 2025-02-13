@@ -151,7 +151,11 @@ def build_subgraph(node_map: Dict[str, NodeData], llm) -> StateGraph:
         for next_id in node.nexts:
             subgraph.add_edge(node.uniq_id, next_id)
 
-    # Conditions
+    # **Fix: Explicitly add edge from START**
+    if start_node.nexts:
+        subgraph.add_edge(START, start_node.nexts[0])
+
+        # Conditions
     for node in find_nodes_by_type(node_map, "CONDITION"):
         subgraph.add_node(
             node.uniq_id,
@@ -166,6 +170,7 @@ def build_subgraph(node_map: Dict[str, NodeData], llm) -> StateGraph:
         )
 
     return subgraph.compile()
+
 
 
 
