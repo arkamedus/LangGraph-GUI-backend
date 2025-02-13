@@ -53,7 +53,6 @@ class PipelineState(TypedDict):
     task: Annotated[str, operator.add]
     condition: Annotated[bool, lambda x, y: y]
 
-@with_metadata
 def execute_step(state: PipelineState, name: str, prompt_template: str, llm) -> PipelineState:
     flush_print(f"{name} is working...")
     state["history"] = clip_history(state["history"])
@@ -63,7 +62,9 @@ def execute_step(state: PipelineState, name: str, prompt_template: str, llm) -> 
     flush_print(state["history"])
     return state
 
-@with_metadata
+execute_step = with_metadata(execute_step, sg_name="workflow", node_name="execute_step", node_id="N/A", node_type="STEP")
+
+
 def execute_tool(state: PipelineState, name: str, prompt_template: str, llm) -> PipelineState:
     flush_print(f"{name} is working...")
     state["history"] = clip_history(state["history"])
@@ -83,7 +84,9 @@ def execute_tool(state: PipelineState, name: str, prompt_template: str, llm) -> 
     state["history"] = clip_history(state["history"])
     return state
 
-@with_metadata
+execute_tool = with_metadata(execute_tool, sg_name="workflow", node_name="execute_tool", node_id="N/A", node_type="TOOL")
+
+
 def condition_switch(state: PipelineState, name: str, prompt_template: str, llm) -> PipelineState:
     flush_print(f"{name} is working...")
     state["history"] = clip_history(state["history"])
@@ -92,7 +95,10 @@ def condition_switch(state: PipelineState, name: str, prompt_template: str, llm)
     flush_print(f"Condition is {state['condition']}")
     return state
 
-@with_metadata
+condition_switch = with_metadata(condition_switch, sg_name="workflow", node_name="condition_switch", node_id="N/A", node_type="CONDITION")
+
+
+#@with_metadata
 def info_add(name: str, state: PipelineState, information: str, llm) -> PipelineState:
     flush_print(f"{name} is adding information...")
 
@@ -102,7 +108,7 @@ def info_add(name: str, state: PipelineState, information: str, llm) -> Pipeline
 
     return state
 
-@with_metadata
+#@with_metadata
 def sg_add(name:str, state: PipelineState, sg_name: str) -> PipelineState:
     flush_print(f"{name} is working, it is a subgraph node call {sg_name} ...")
     subgraph = subgraph_registry[sg_name]
@@ -125,7 +131,7 @@ def conditional_edge(state: PipelineState) -> Literal["True", "False"]:
     else:
         return "False"
 
-@with_metadata
+#@with_metadata
 def build_subgraph(node_map: Dict[str, NodeData], llm) -> StateGraph:
     # Define the state machine
     subgraph = StateGraph(PipelineState)
