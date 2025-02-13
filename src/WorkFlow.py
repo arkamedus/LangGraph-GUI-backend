@@ -1,5 +1,3 @@
-# WorkFlow.py
-
 import os
 import re
 import json
@@ -13,11 +11,11 @@ from NodeData import NodeData
 from llm import get_llm, clip_history, create_llm_chain
 from util import flush_print, with_metadata
 
-# Tool registry to hold information about tools
+# Tool registry
 tool_registry: Dict[str, Callable] = {}
 tool_info_registry: Dict[str, str] = {}
 
-# Subgraph registry to hold all the subgraph
+# Subgraph registry
 subgraph_registry: Dict[str, Any] = {}
 
 # Decorator to register tools
@@ -30,14 +28,6 @@ def tool(func: Callable) -> Callable:
     return func
 
 def parse_nodes_from_json(graph_data: Dict[str, Any]) -> Dict[str, NodeData]:
-    """
-    Parses node data from a subgraph's JSON structure.
-
-    Args:
-        graph_data: A dictionary representing a subgraph.
-    Returns:
-        A dictionary of NodeData objects keyed by their unique IDs.
-    """
     node_map = {}
     for node_data in graph_data.get("nodes", []):
         node = NodeData.from_dict(node_data)
@@ -53,8 +43,9 @@ class PipelineState(TypedDict):
     task: Annotated[str, operator.add]
     condition: Annotated[bool, lambda x, y: y]
 
-def execute_step(state: PipelineState, name: str, prompt_template: str, llm) -> PipelineState:
-    flush_print(f"{name} is working...")
+@with_metadata
+def execute_step(state: PipelineState, name: str, prompt_template: str, llm, **metadata) -> PipelineState:
+    flush_print(f"{name} (ID: {metadata['node_id']}) is working...")
     state["history"] = clip_history(state["history"])
     data = json.loads(create_llm_chain(prompt_template, llm, state["history"]))
     state["history"] += "\n" + json.dumps(data)
@@ -62,11 +53,9 @@ def execute_step(state: PipelineState, name: str, prompt_template: str, llm) -> 
     flush_print(state["history"])
     return state
 
-execute_step = with_metadata(execute_step, sg_name="workflow", node_name="execute_step", node_id="N/A", node_type="STEP")
-
-
-def execute_tool(state: PipelineState, name: str, prompt_template: str, llm) -> PipelineState:
-    flush_print(f"{name} is working...")
+@with_metadata
+def execute_tool(state: PipelineState, name: str, prompt_template: str, llm, **metadata) -> PipelineState:
+    flush_print(f"{name} (ID: {metadata['node_id']}) is working...")
     state["history"] = clip_history(state["history"])
     generation = create_llm_chain(prompt_template, llm, state["history"])
     sanitized_generation = re.sub(r'[\x00-\x1F\x7F]', '', generation)
@@ -84,32 +73,24 @@ def execute_tool(state: PipelineState, name: str, prompt_template: str, llm) -> 
     state["history"] = clip_history(state["history"])
     return state
 
-execute_tool = with_metadata(execute_tool, sg_name="workflow", node_name="execute_tool", node_id="N/A", node_type="TOOL")
-
-
-def condition_switch(state: PipelineState, name: str, prompt_template: str, llm) -> PipelineState:
-    flush_print(f"{name} is working...")
+@with_metadata
+def condition_switch(state: PipelineState, name: str, prompt_template: str, llm, **metadata) -> PipelineState:
+    flush_print(f"{name} (ID: {metadata['node_id']}) is working...")
     state["history"] = clip_history(state["history"])
     data = json.loads(create_llm_chain(prompt_template, llm, state["history"]))
     state["condition"] = data["switch"]
     flush_print(f"Condition is {state['condition']}")
     return state
 
-condition_switch = with_metadata(condition_switch, sg_name="workflow", node_name="condition_switch", node_id="N/A", node_type="CONDITION")
 
-
-#@with_metadata
 def info_add(name: str, state: PipelineState, information: str, llm) -> PipelineState:
     flush_print(f"{name} is adding information...")
-
-    # Append the provided information to the history
     state["history"] += "\n" + information
     state["history"] = clip_history(state["history"])
-
     return state
 
-#@with_metadata
-def sg_add(name:str, state: PipelineState, sg_name: str) -> PipelineState:
+
+def sg_add(name: str, state: PipelineState, sg_name: str) -> PipelineState:
     flush_print(f"{name} is working, it is a subgraph node call {sg_name} ...")
     subgraph = subgraph_registry[sg_name]
     response = subgraph.invoke(
@@ -126,106 +107,62 @@ def sg_add(name:str, state: PipelineState, sg_name: str) -> PipelineState:
 
 
 def conditional_edge(state: PipelineState) -> Literal["True", "False"]:
-    if state["condition"] in ["True", "true", True]:
-        return "True"
-    else:
-        return "False"
+    return "True" if state["condition"] in ["True", "true", True] else "False"
 
-#@with_metadata
+
 def build_subgraph(node_map: Dict[str, NodeData], llm) -> StateGraph:
-    # Define the state machine
     subgraph = StateGraph(PipelineState)
 
-    # Start node, only one start point
+    # Start node
     start_node = find_nodes_by_type(node_map, "START")[0]
     flush_print(f"Start root ID: {start_node.uniq_id}")
 
     # Step nodes
-    step_nodes = find_nodes_by_type(node_map, "STEP")
-    for current_node in step_nodes:
-        if current_node.tool:
-            tool_info = tool_info_registry[current_node.tool]
-            prompt_template = f"""
-            history: {{history}}
-            {current_node.description}
-            Available tool: {tool_info}
-            Based on Available tool, arguments in the json format:
-            "function": "<func_name>", "args": [<arg1>, <arg2>, ...]
-
-            next stage directly parse then run <func_name>(<arg1>,<arg2>, ...) make sure syntax is right json and align function siganture
-            """
-            subgraph.add_node(
-                current_node.uniq_id, 
-                lambda state, template=prompt_template, llm=llm, name=current_node.name : execute_tool(name, state, template, llm)
-            )
-        else:
-            prompt_template=f"""
-            history: {{history}}
-            {current_node.description}
-            you reply in the json format
-            """
-            subgraph.add_node(
-                current_node.uniq_id, 
-                lambda state, template=prompt_template, llm=llm, name=current_node.name: execute_step(name, state, template, llm)
-            )
-
-    # Add INFO nodes
-    info_nodes = find_nodes_by_type(node_map, "INFO")
-    for info_node in info_nodes:
-        # INFO nodes just append predefined information to the state history
+    for node in find_nodes_by_type(node_map, "STEP"):
+        prompt_template = f"""
+        history: {{history}}
+        {node.description}
+        you reply in the json format
+        """
         subgraph.add_node(
-            info_node.uniq_id, 
-            lambda state, template=info_node.description, llm=llm, name=info_node.name: info_add(name, state, template, llm)
+            node.uniq_id,
+            lambda state, template=prompt_template, llm=llm, node_id=node.uniq_id, name=node.name:
+            execute_step(state, name, template, llm, graph="workflow", subgraph="workflow", node_id=node_id, node_type="STEP")
         )
-    
-    # Add SUBGRAPH nodes
-    subgraph_nodes = find_nodes_by_type(node_map, "SUBGRAPH")
-    for sg_node in subgraph_nodes:
+
+    # INFO nodes
+    for node in find_nodes_by_type(node_map, "INFO"):
         subgraph.add_node(
-            sg_node.uniq_id, 
-            lambda state, llm=llm, name=sg_node.name, sg_name=sg_node.name: sg_add(name, state, sg_name)
+            node.uniq_id,
+            lambda state, template=node.description, llm=llm, name=node.name: info_add(name, state, template, llm)
+        )
+
+    # SUBGRAPH nodes
+    for node in find_nodes_by_type(node_map, "SUBGRAPH"):
+        subgraph.add_node(
+            node.uniq_id,
+            lambda state, llm=llm, name=node.name, sg_name=node.name: sg_add(name, state, sg_name)
         )
 
     # Edges
-    # Find all next nodes from start_node
-    next_node_ids = start_node.nexts
-    next_nodes = [node_map[next_id] for next_id in next_node_ids]
-    
-    for next_node in next_nodes:
-        flush_print(f"Next node ID: {next_node.uniq_id}, Type: {next_node.type}")
-        subgraph.add_edge(START, next_node.uniq_id)   
+    for node in node_map.values():
+        for next_id in node.nexts:
+            subgraph.add_edge(node.uniq_id, next_id)
 
-    # Find all next nodes from step_nodes
-    for node in step_nodes + info_nodes + subgraph_nodes:
-        next_nodes = [node_map[next_id] for next_id in node.nexts]
-        
-        for next_node in next_nodes:
-            flush_print(f"{node.name} {node.uniq_id}'s next node: {next_node.name} {next_node.uniq_id}, Type: {next_node.type}")
-            subgraph.add_edge(node.uniq_id, next_node.uniq_id)
-
-    # Find all condition nodes
-    condition_nodes = find_nodes_by_type(node_map, "CONDITION")
-    for condition in condition_nodes:
-        condition_template = f"""{condition.description}
-        history: {{history}}, decide the condition result in the json format:
-        "switch": True/False
-        """
+    # Conditions
+    for node in find_nodes_by_type(node_map, "CONDITION"):
         subgraph.add_node(
-            condition.uniq_id, 
-            lambda state, template=condition_template, llm=llm, name=condition.name: condition_switch(name, state, template, llm)
+            node.uniq_id,
+            lambda state, template=node.description, llm=llm, name=node.name:
+            condition_switch(state, name, template, llm, graph="workflow", subgraph="workflow", node_id=node.uniq_id, node_type="CONDITION")
         )
-
-        flush_print(f"{condition.name} {condition.uniq_id}'s condition")
-        flush_print(f"true will go {condition.true_next}")
-        flush_print(f"false will go {condition.false_next}")
         subgraph.add_conditional_edges(
-            condition.uniq_id,
-            conditional_edge,
-            {
-                "True": condition.true_next if condition.true_next else END,
-                "False": condition.false_next if condition.false_next else END
+            node.uniq_id, conditional_edge, {
+                "True": node.true_next if node.true_next else END,
+                "False": node.false_next if node.false_next else END
             }
         )
+
     return subgraph.compile()
 
 
@@ -235,48 +172,29 @@ class MainGraphState(TypedDict):
 def invoke_root(state: MainGraphState):
     subgraph = subgraph_registry["root"]
     response = subgraph.invoke(
-        PipelineState(
-            history="",
-            task="",
-            condition=False
-        )
+        PipelineState(history="", task="", condition=False)
     )
-    return  {"input": None}
+    return {"input": None}
 
 
 def run_workflow_as_server(llm):
-    # Load subgraph data
     with open("graph.json", 'r') as file:
         graphs = json.load(file)
-    
-    # Process each subgraph
-    for graph in graphs:
-        subgraph_name = graph.get("name")        
-        node_map = parse_nodes_from_json(graph)
-        
-        # Register the tool functions dynamically if has tool node, must before build graph
-        for tool_node in find_nodes_by_type(node_map, "TOOL"):
-            tool_code = f"{tool_node.description}"
-            exec(tool_code, globals())
 
-        
+    for graph in graphs:
+        subgraph_name = graph.get("name")
+        node_map = parse_nodes_from_json(graph)
+
+        for tool_node in find_nodes_by_type(node_map, "TOOL"):
+            exec(tool_node.description, globals())
+
         subgraph = build_subgraph(node_map, llm)
         subgraph_registry[subgraph_name] = subgraph
 
-    
-    # Main Graph
     main_graph = StateGraph(MainGraphState)
     main_graph.add_node("subgraph", invoke_root)
     main_graph.set_entry_point("subgraph")
     main_graph = main_graph.compile()
 
-
-    # ==========================
-    # Run
-    # ==========================
-    for state in main_graph.stream(
-        {
-            "input": None,
-        }
-    ):
+    for state in main_graph.stream({"input": None}):
         flush_print(state)
