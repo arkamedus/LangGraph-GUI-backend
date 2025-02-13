@@ -16,7 +16,7 @@ def flush_print(message: str, status: Optional[bool] = None):
         "node_id": CURRENT_METADATA.get("node_id"),
         "node_type": CURRENT_METADATA.get("node_type"),
         "status": status,
-        "message": message.replace("\n", "\\n")
+        "message": message,#.replace("\n", "\\n")
     }
     print(json.dumps(log, ensure_ascii=False), flush=True)
 
