@@ -90,10 +90,10 @@ async def run_script(request: Request, username: str):
 
 @app.get('/status/{username}')
 async def check_status(username: str):
-    # Check if the handler exists and retrieve its status
     if username in handlers:
-        status = await handlers[username].status()  # Note: status() is an async function
-        return {"running": status["is_running"]}  # Make sure to return running status
+        status = await handlers[username].status()  # status is a JSON string
+        status_dict = json.loads(status)  # Convert JSON string to dictionary
+        return {"running": status_dict["is_running"]}  # Now safe to access
     return {"running": False}
 
 
