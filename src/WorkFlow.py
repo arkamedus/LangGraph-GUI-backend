@@ -113,9 +113,11 @@ def conditional_edge(state: PipelineState) -> Literal["True", "False"]:
 def build_subgraph(node_map: Dict[str, NodeData], llm) -> StateGraph:
     subgraph = StateGraph(PipelineState)
 
-    # Start node
+    # Ensure START node is added first
     start_node = find_nodes_by_type(node_map, "START")[0]
     flush_print(f"Start root ID: {start_node.uniq_id}")
+
+    subgraph.add_node(start_node.uniq_id, lambda state: state)  # No-op start node
 
     # Step nodes
     for node in find_nodes_by_type(node_map, "STEP"):
@@ -144,7 +146,7 @@ def build_subgraph(node_map: Dict[str, NodeData], llm) -> StateGraph:
             lambda state, llm=llm, name=node.name, sg_name=node.name: sg_add(name, state, sg_name)
         )
 
-    # Edges
+    # Ensure all nodes are added before defining edges
     for node in node_map.values():
         for next_id in node.nexts:
             subgraph.add_edge(node.uniq_id, next_id)
@@ -164,6 +166,7 @@ def build_subgraph(node_map: Dict[str, NodeData], llm) -> StateGraph:
         )
 
     return subgraph.compile()
+
 
 
 class MainGraphState(TypedDict):
