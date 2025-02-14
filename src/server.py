@@ -78,13 +78,23 @@ async def run_script(request: Request, username: str):
     
     handler = handlers[username]
     # start process in background
-    async def stream_response():
-        asyncio.create_task(handler.run(command, user_workspace)) # start the process as a task
-        async for output in handler.get_stream():
+    async for output in handler.get_stream():
+        try:
+            # If output is already a dict, just dump it as JSON.
             if isinstance(output, dict):
-                yield f"data: {output}\n\n"  # Send final status
-                break
-            yield f"data: {output}\n\n"
+                yield f"data: {json.dumps(output)}\n\n"
+                break  # assume dict signals final status
+            else:
+                # Try to parse output string as JSON.
+                try:
+                    parsed = json.loads(output)
+                except json.JSONDecodeError:
+                    # Fallback: use ast.literal_eval to convert single quotes to a dict.
+                    parsed = ast.literal_eval(output)
+                yield f"data: {json.dumps(parsed)}\n\n"
+        except Exception as e:
+            error_response = {"status": "error", "message": str(e)}
+            yield f"data: {json.dumps(error_response)}\n\n"
 
     return StreamingResponse(stream_response(), media_type="text/event-stream")
 
