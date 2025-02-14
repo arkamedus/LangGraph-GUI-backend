@@ -31,7 +31,7 @@ def with_metadata(fn: Callable, sg_name: str, node_name: str, node_id: str, node
     def wrapped(state, *args, **kwargs):
         global CURRENT_METADATA
         CURRENT_METADATA = {
-            "graph": sg_namae,
+            "graph": sg_name,
             "subgraph": sg_name,
             "node": node_name,
             "node_id": node_id,
