@@ -80,9 +80,11 @@ def execute_step(name: str, state: PipelineState, prompt_template: str, llm) -> 
     state["history"] = clip_history(state["history"])
     generation = create_llm_chain(prompt_template, llm, state["history"])
     data = json.loads(generation)
-    state["history"] += "\n" + json.dumps(data)
+    dd = json.dumps(data)
+    flush_print(f"{dd}", status=True)
+    state["history"] += "\n" + dd
     state["history"] = clip_history(state["history"])
-    flush_print(state["history"], status=False)
+    flush_print(f"{name} complete...", status=False)
     return state
 
 def execute_tool(name: str, state: PipelineState, prompt_template: str, llm) -> PipelineState:
@@ -111,12 +113,14 @@ def condition_switch(name: str, state: PipelineState, prompt_template: str, llm)
     state["condition"] = data["switch"]
     state["history"] += f"\nCondition is {state['condition']}"
     state["history"] = clip_history(state["history"])
+    flush_print(f"{name} is done, condition was {state['condition']}", status=False)
     return state
 
 def info_add(name: str, state: PipelineState, information: str, llm) -> PipelineState:
     flush_print(f"{name} is adding information...", status=True)
     state["history"] += "\n" + information
     state["history"] = clip_history(state["history"])
+    flush_print(f"{name} is done", status=False)
     return state
 
 def sg_add(name: str, state: PipelineState, sg_name: str) -> PipelineState:
@@ -225,7 +229,7 @@ def build_subgraph(node_map: Dict[str, NodeData], llm, sg_name:str) -> StateGrap
         )
         subgraph.add_node(condition.uniq_id, node_fn)
 
-        flush_print(f"{condition.name} {condition.uniq_id}'s condition")
+        #flush_print(f"{condition.name} {condition.uniq_id}'s condition")
         flush_print(f"true will go {condition.true_next}")
         flush_print(f"false will go {condition.false_next}")
         subgraph.add_conditional_edges(
