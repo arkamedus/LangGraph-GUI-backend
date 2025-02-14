@@ -137,95 +137,100 @@ def sg_add(name: str, state: PipelineState, sg_name: str) -> PipelineState:
 def conditional_edge(state: PipelineState) -> Literal["True", "False"]:
     return "True" if state["condition"] in [True, "True", "true"] else "False"
 
-def build_subgraph(node_map: Dict[str, NodeData], llm, sg_name: str) -> Optional[StateGraph]:
+def build_subgraph(node_map: Dict[str, NodeData], llm, subgraph_name:str) -> StateGraph:
+    # Define the state machine
     subgraph = StateGraph(PipelineState)
 
-    # Ensure the subgraph has a START node
-    start_nodes = find_nodes_by_type(node_map, "START")
-    if not start_nodes:
-        flush_print(f"Error: No START node found for subgraph '{sg_name}'. Skipping.", status=True)
-        return None  # Skip building this subgraph
+    # Start node, only one start point
+    start_node = find_nodes_by_type(node_map, "START")[0]
+    flush_print(f"Start root ID: {start_node.uniq_id}")
 
-    start_node = start_nodes[0]  # Take the first START node
-    flush_print(f"Start root ID for {sg_name}: {start_node.uniq_id}", status=True)
-
+    # Step nodes
     step_nodes = find_nodes_by_type(node_map, "STEP")
     for current_node in step_nodes:
         if current_node.tool:
-            tool_info = tool_info_registry.get(current_node.tool, "Unknown tool")
+            tool_info = tool_info_registry[current_node.tool]
             prompt_template = f"""
             history: {{history}}
             {current_node.description}
             Available tool: {tool_info}
-            Based on available tool, arguments in the JSON format:
+            Based on Available tool, arguments in the json format:
             "function": "<func_name>", "args": [<arg1>, <arg2>, ...]
+
+            next stage directly parse then run <func_name>(<arg1>,<arg2>, ...) make sure syntax is right json and align function siganture
             """
-            node_fn = with_metadata(
-                lambda state, template=prompt_template, llm=llm, name=current_node.name: execute_tool(name, state, template, llm),
-                sg_name, current_node.name, current_node.uniq_id, current_node.type
+            subgraph.add_node(
+                current_node.uniq_id,
+                lambda state, template=prompt_template, llm=llm, name=current_node.name : execute_tool(name, state, template, llm)
             )
-            subgraph.add_node(current_node.uniq_id, node_fn)
         else:
-            prompt_template = f"""
+            prompt_template=f"""
             history: {{history}}
             {current_node.description}
-            you reply in JSON format
+            you reply in the json format
             """
-            node_fn = with_metadata(
-                lambda state, template=prompt_template, llm=llm, name=current_node.name: execute_step(name, state, template, llm),
-                sg_name, current_node.name, current_node.uniq_id, current_node.type
+            subgraph.add_node(
+                current_node.uniq_id,
+                lambda state, template=prompt_template, llm=llm, name=current_node.name: execute_step(name, state, template, llm)
             )
-            subgraph.add_node(current_node.uniq_id, node_fn)
 
-    # Process INFO nodes
+    # Add INFO nodes
     info_nodes = find_nodes_by_type(node_map, "INFO")
     for info_node in info_nodes:
-        node_fn = with_metadata(
-            lambda state, template=info_node.description, llm=llm, name=info_node.name: info_add(name, state, template, llm),
-            sg_name, info_node.name, info_node.uniq_id, info_node.type
+        # INFO nodes just append predefined information to the state history
+        subgraph.add_node(
+            info_node.uniq_id,
+            lambda state, template=info_node.description, llm=llm, name=info_node.name: info_add(name, state, template, llm)
         )
-        subgraph.add_node(info_node.uniq_id, node_fn)
 
-    # Process SUBGRAPH nodes
+    # Add SUBGRAPH nodes
     subgraph_nodes = find_nodes_by_type(node_map, "SUBGRAPH")
     for sg_node in subgraph_nodes:
-        node_fn = with_metadata(
-            lambda state, llm=llm, name=sg_node.name, sg_name=sg_node.name: sg_add(name, state, sg_name),
-            sg_name, sg_node.name, sg_node.uniq_id, sg_node.type
+        subgraph.add_node(
+            sg_node.uniq_id,
+            lambda state, llm=llm, name=sg_node.name, sg_name=sg_node.name: sg_add(name, state, sg_name)
         )
-        subgraph.add_node(sg_node.uniq_id, node_fn)
 
-    # Add edges
-    for node in node_map.values():
-        for next_id in node.nexts:
-            if next_id in node_map:
-                subgraph.add_edge(node.uniq_id, next_id)
-            else:
-                flush_print(f"Warning: Node {node.uniq_id} points to missing node {next_id} in {sg_name}.", status=True)
+    # Edges
+    # Find all next nodes from start_node
+    next_node_ids = start_node.nexts
+    next_nodes = [node_map[next_id] for next_id in next_node_ids]
 
-    # Process CONDITION nodes
+    for next_node in next_nodes:
+        flush_print(f"Next node ID: {next_node.uniq_id}, Type: {next_node.type}")
+        subgraph.add_edge(START, next_node.uniq_id)
+
+        # Find all next nodes from step_nodes
+    for node in step_nodes + info_nodes + subgraph_nodes:
+        next_nodes = [node_map[next_id] for next_id in node.nexts]
+
+        for next_node in next_nodes:
+            flush_print(f"{node.name} {node.uniq_id}'s next node: {next_node.name} {next_node.uniq_id}, Type: {next_node.type}")
+            subgraph.add_edge(node.uniq_id, next_node.uniq_id)
+
+    # Find all condition nodes
     condition_nodes = find_nodes_by_type(node_map, "CONDITION")
     for condition in condition_nodes:
         condition_template = f"""{condition.description}
-        history: {{history}}, decide the condition result in the JSON format:
+        history: {{history}}, decide the condition result in the json format:
         "switch": True/False
         """
-        node_fn = with_metadata(
-            lambda state, template=condition_template, llm=llm, name=condition.name: condition_switch(name, state, template, llm),
-            sg_name, condition.name, condition.uniq_id, condition.type
+        subgraph.add_node(
+            condition.uniq_id,
+            lambda state, template=condition_template, llm=llm, name=condition.name: condition_switch(name, state, template, llm)
         )
-        subgraph.add_node(condition.uniq_id, node_fn)
 
-        # Ensure condition node points to valid next nodes
+        flush_print(f"{condition.name} {condition.uniq_id}'s condition")
+        flush_print(f"true will go {condition.true_next}")
+        flush_print(f"false will go {condition.false_next}")
         subgraph.add_conditional_edges(
             condition.uniq_id,
             conditional_edge,
             {
-                "True": condition.true_next if condition.true_next in node_map else END,
-                "False": condition.false_next if condition.false_next in node_map else END
+                "True": condition.true_next if condition.true_next else END,
+                "False": condition.false_next if condition.false_next else END
             }
         )
-
     return subgraph.compile()
 
 class MainGraphState(TypedDict):
