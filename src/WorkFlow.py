@@ -124,7 +124,7 @@ def info_add(name: str, state: PipelineState, information: str, llm) -> Pipeline
     return state
 
 def sg_add(name: str, state: PipelineState, sg_name: str) -> PipelineState:
-    flush_print(f"{name} is working, it is a subgraph node call {sg_name} ...", status=True)
+    flush_print(f"{name} is working {sg_name} ...", status=True)
     subgraph = subgraph_registry[sg_name]
     response = subgraph.invoke(
         PipelineState(
@@ -136,6 +136,7 @@ def sg_add(name: str, state: PipelineState, sg_name: str) -> PipelineState:
     state["history"] = response["history"]
     state["task"] = response["task"]
     state["condition"] = response["condition"]
+    flush_print(f"{name} is done", status=False)
     return state
 
 def conditional_edge(state: PipelineState) -> Literal["True", "False"]:
