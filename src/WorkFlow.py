@@ -137,7 +137,7 @@ def sg_add(name: str, state: PipelineState, sg_name: str) -> PipelineState:
 def conditional_edge(state: PipelineState) -> Literal["True", "False"]:
     return "True" if state["condition"] in [True, "True", "true"] else "False"
 
-def build_subgraph(node_map: Dict[str, NodeData], llm, subgraph_name:str) -> StateGraph:
+def build_subgraph(node_map: Dict[str, NodeData], llm, sg_name:str) -> StateGraph:
     # Define the state machine
     subgraph = StateGraph(PipelineState)
 
@@ -159,37 +159,41 @@ def build_subgraph(node_map: Dict[str, NodeData], llm, subgraph_name:str) -> Sta
 
             next stage directly parse then run <func_name>(<arg1>,<arg2>, ...) make sure syntax is right json and align function siganture
             """
-            subgraph.add_node(
-                current_node.uniq_id,
-                lambda state, template=prompt_template, llm=llm, name=current_node.name : execute_tool(name, state, template, llm)
+            node_fn = with_metadata(
+                lambda state, template=prompt_template, llm=llm, name=current_node.name: execute_tool(name, state, template, llm),
+                sg_name, current_node.name, current_node.uniq_id, current_node.type
             )
+            subgraph.add_node(current_node.uniq_id, node_fn)
         else:
             prompt_template=f"""
             history: {{history}}
             {current_node.description}
             you reply in the json format
             """
-            subgraph.add_node(
-                current_node.uniq_id,
-                lambda state, template=prompt_template, llm=llm, name=current_node.name: execute_step(name, state, template, llm)
+            node_fn = with_metadata(
+                lambda state, template=prompt_template, llm=llm, name=current_node.name: execute_step(name, state, template, llm),
+                sg_name, current_node.name, current_node.uniq_id, current_node.type
             )
+            subgraph.add_node(current_node.uniq_id, node_fn)
 
     # Add INFO nodes
     info_nodes = find_nodes_by_type(node_map, "INFO")
     for info_node in info_nodes:
         # INFO nodes just append predefined information to the state history
-        subgraph.add_node(
-            info_node.uniq_id,
-            lambda state, template=info_node.description, llm=llm, name=info_node.name: info_add(name, state, template, llm)
+        node_fn = with_metadata(
+            lambda state, template=info_node.description, llm=llm, name=info_node.name: info_add(name, state, template, llm),
+            sg_name, info_node.name, info_node.uniq_id, info_node.type
         )
+        subgraph.add_node(info_node.uniq_id, node_fn)
 
     # Add SUBGRAPH nodes
     subgraph_nodes = find_nodes_by_type(node_map, "SUBGRAPH")
     for sg_node in subgraph_nodes:
-        subgraph.add_node(
-            sg_node.uniq_id,
-            lambda state, llm=llm, name=sg_node.name, sg_name=sg_node.name: sg_add(name, state, sg_name)
+        node_fn = with_metadata(
+            lambda state, llm=llm, name=sg_node.name, sg_name=sg_node.name: sg_add(name, state, sg_name),
+            sg_name, sg_node.name, sg_node.uniq_id, sg_node.type
         )
+        subgraph.add_node(sg_node.uniq_id, node_fn)
 
     # Edges
     # Find all next nodes from start_node
@@ -215,10 +219,11 @@ def build_subgraph(node_map: Dict[str, NodeData], llm, subgraph_name:str) -> Sta
         history: {{history}}, decide the condition result in the json format:
         "switch": True/False
         """
-        subgraph.add_node(
-            condition.uniq_id,
-            lambda state, template=condition_template, llm=llm, name=condition.name: condition_switch(name, state, template, llm)
+        node_fn = with_metadata(
+            lambda state, template=condition_template, llm=llm, name=condition.name: condition_switch(name, state, template, llm),
+            sg_name, condition.name, condition.uniq_id, condition.type
         )
+        subgraph.add_node(condition.uniq_id, node_fn)
 
         flush_print(f"{condition.name} {condition.uniq_id}'s condition")
         flush_print(f"true will go {condition.true_next}")
