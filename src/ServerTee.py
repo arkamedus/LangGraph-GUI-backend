@@ -35,6 +35,9 @@ class ServerTee:
             sys.stdout = self.stdout
             self.file.close()
 
+    def isatty(self):
+        return self.stdout.isatty()  # Ensure compatibility with logging
+
     def notify_subscribers(self, message):
         for subscriber in self.subscribers:
             subscriber.put(message)
