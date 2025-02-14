@@ -38,6 +38,8 @@ class ProcessHandler:
                         print(message, flush=True)  # Flush output immediately
                         if prefix == "STDOUT: ":  # Only add stdout to the queue
                             await self._output_queue.put(message)
+                        if prefix == "STDERR: ":  # Only add stdout to the queue
+                            await self._output_queue.put(message)
                     else:
                         break
 

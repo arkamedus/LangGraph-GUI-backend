@@ -21,6 +21,7 @@ def flush_print(message: str, status: Optional[bool] = None):
         "subgraph": CURRENT_METADATA.get("subgraph"),
         "node": CURRENT_METADATA.get("node"),
         "node_id": CURRENT_METADATA.get("node_id"),
+        "uniq_id": CURRENT_METADATA.get("node_id"),
         "node_type": CURRENT_METADATA.get("node_type"),
         "status": status,
         "message": message
@@ -35,6 +36,7 @@ def with_metadata(fn: Callable, sg_name: str, node_name: str, node_id: str, node
             "subgraph": sg_name,
             "node": node_name,
             "node_id": node_id,
+            "uniq_id": node_id,
             "node_type": node_type
         }
         flush_print(f"START execution", status=True)
