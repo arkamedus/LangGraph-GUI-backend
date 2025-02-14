@@ -111,28 +111,6 @@ def condition_switch(name: str, state: PipelineState, prompt_template: str, llm)
     state["history"] = clip_history(state["history"])
     return state
 
-def execute_accumulate(name: str, state: PipelineState, llm) -> PipelineState:
-    flush_print(f"{name} (ACCUMULATE) is working...", status=True)
-    if "accumulated" not in state:
-        state["accumulated"] = []
-    state["accumulated"].append(state["task"])
-    expected_count = 3
-    if "expected:" in state.get("description", "").lower():
-        try:
-            expected_count = int(state["description"].lower().split("expected:")[1].split()[0])
-        except Exception:
-            pass
-    flush_print(f"Accumulated {len(state['accumulated'])}/{expected_count} values.", status=True)
-    if len(state["accumulated"]) < expected_count:
-        return state
-    else:
-        state["task"] = state["accumulated"]
-        state["history"] += f"\nACCUMULATE node passed combined task: {json.dumps(state['task'])}"
-        state["history"] = clip_history(state["history"])
-        del state["accumulated"]
-        flush_print(f"ACCUMULATE node passing combined task: {state['task']}", status=False)
-        return state
-
 def info_add(name: str, state: PipelineState, information: str, llm) -> PipelineState:
     flush_print(f"{name} is adding information...", status=True)
     state["history"] += "\n" + information
@@ -202,27 +180,20 @@ def build_subgraph(node_map: Dict[str, NodeData], llm, sg_name: str) -> StateGra
     for sg_node in subgraph_nodes:
         node_fn = with_metadata(
             lambda state, llm=llm, name=sg_node.name, sg_name=sg_node.name: sg_add(name, state, sg_name),
-            sg_name, sg_node.name, sg_node.uniq_id, sg_node.type
         )
-        subgraph.add_node(sg_node.uniq_id, node_fn)
-
-    accumulate_nodes = find_nodes_by_type(node_map, "ACCUMULATE")
-    for acc_node in accumulate_nodes:
-        node_fn = with_metadata(
-            lambda state, llm=llm, name=acc_node.name, desc=acc_node.description: (state.update({"description": desc}) or execute_accumulate(name, state, llm)),
-            sg_name, acc_node.name, acc_node.uniq_id, acc_node.type
-        )
-        subgraph.add_node(acc_node.uniq_id, node_fn)
-
+    # Edges
+    # Find all next nodes from start_node
     next_node_ids = start_node.nexts
-    for next_id in next_node_ids:
-        next_node = node_map[next_id]
+    next_nodes = [node_map[next_id] for next_id in next_node_ids]
+
+    for next_node in next_nodes:
         flush_print(f"Next node ID: {next_node.uniq_id}, Type: {next_node.type}", status=True)
         subgraph.add_edge(START, next_node.uniq_id)
 
-    for node in step_nodes + info_nodes + subgraph_nodes + accumulate_nodes:
-        for next_id in node.nexts:
-            next_node = node_map[next_id]
+    for node in step_nodes + info_nodes + subgraph_nodes:
+        next_nodes = [node_map[next_id] for next_id in node.nexts]
+
+        for next_node in next_nodes:
             flush_print(f"{node.name} {node.uniq_id}'s next node: {next_node.name} {next_node.uniq_id}, Type: {next_node.type}", status=True)
             subgraph.add_edge(node.uniq_id, next_node.uniq_id)
 
@@ -270,8 +241,11 @@ def run_workflow_as_server(llm):
     for graph in graphs:
         subgraph_name = graph.get("name")
         node_map = parse_nodes_from_json(graph)
+
+        # Register the tool functions dynamically if has tool node, must before build graph
         for tool_node in find_nodes_by_type(node_map, "TOOL"):
-            exec(tool_node.description, globals())
+            tool_code = f"{tool_node.description}"
+            exec(tool_code, globals())
         subgraph = build_subgraph(node_map, llm, subgraph_name)
         subgraph_registry[subgraph_name] = subgraph
 
