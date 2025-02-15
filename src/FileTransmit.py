@@ -98,3 +98,32 @@ async def clean_cache(username: str):
     except Exception as e:
         print(f"Error cleaning workspace: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to clean workspace: {str(e)}")
+
+@file_router.get("/list-files/{username}")
+async def list_files(username: str):
+    user_workspace = get_or_create_workspace(username)
+    def build_tree(path):
+        items = []
+        for entry in os.scandir(path):
+            if entry.is_dir():
+                items.append({
+                    "name": entry.name,
+                    "isDir": True,
+                    "children": build_tree(entry.path)
+                })
+            else:
+                items.append({
+                    "name": entry.name,
+                    "isDir": False
+                })
+        return items
+    return {"name": username, "isDir": True, "children": build_tree(user_workspace)}
+
+
+@file_router.get("/download-file/{username}")
+async def download_file(username: str, filepath: str):
+    user_workspace = get_or_create_workspace(username)
+    full_path = os.path.join(user_workspace, filepath)
+    if not os.path.isfile(full_path):
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(full_path, media_type="application/octet-stream", filename=os.path.basename(full_path))
